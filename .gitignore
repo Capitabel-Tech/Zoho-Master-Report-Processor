@@ -1,0 +1,21 @@
+# Backend
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.venv/
+backend/*.egg-info/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+
+# Env files (never commit secrets)
+.env
+*.env.local
+
+# Original private business data - never commit real customer/loan data
+MIS for working (1).xlsx
