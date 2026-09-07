@@ -271,6 +271,18 @@ def write_report_sheet(
     src_wb = load_workbook(template.wb_path_for_style, data_only=False)
     src_ws = src_wb.active
 
+    # A raw export's own pre-existing "Total"/"Grand Total" row (Zoho's Deals
+    # export includes one) is noise here - the Total row this function adds at
+    # the end is always freshly computed from the actual rows in *this*
+    # output, so any raw one is dropped rather than treated as a real deal.
+    label_col = template.columns[0]
+    raw_rows = [
+        r
+        for r in raw_rows
+        if str(r.get(label_col.header_norm) or "").strip().lower()
+        not in ("total", "grand total")
+    ]
+
     # Every passthrough column (Status, Lead Source, Gross Revenue, ...) is
     # copied best-effort - if the raw file doesn't have it at all, every row
     # just gets None for it, same as if the raw file had the column but left
@@ -365,16 +377,17 @@ def write_report_sheet(
     LINE_HEIGHT = 15
     ROW_PADDING = 14
 
-    deal_name_col = next(
-        (c.index for c in template.columns if c.header_norm == "deal name"), None
-    )
     STRIPE_FILL = PatternFill(start_color="F2F6FB", end_color="F2F6FB", fill_type="solid")
     TOTAL_FILL = PatternFill(start_color="D9E2EC", end_color="D9E2EC", fill_type="solid")
+
+    def bold_copy(font):
+        return Font(name=font.name, size=font.size, bold=True, color=font.color)
+
+    passthrough_values: dict[int, list[object]] = {c.index: [] for c in template.columns}
 
     for i, raw_row in enumerate(raw_rows):
         out_row = first_data_row + i
         max_lines = 1
-        row_values = {}
         for col in template.columns:
             example_cell = src_ws.cell(template.example_row, col.index)
             dst_cell = out_ws.cell(out_row, col.index)
@@ -388,34 +401,101 @@ def write_report_sheet(
                 )
             else:
                 value = raw_row.get(col.header_norm)
+                passthrough_values[col.index].append(value)
             dst_cell.value = value
-            row_values[col.index] = value
             copy_style(example_cell, dst_cell)
 
             if isinstance(value, str) and not value.startswith("="):
                 col_width = template.column_widths.get(get_column_letter(col.index))
                 max_lines = max(max_lines, wrapped_line_count(value, col_width))
 
-        is_total_row = deal_name_col is not None and str(
-            row_values.get(deal_name_col) or ""
-        ).strip().lower() in ("total", "grand total")
-
-        for col in template.columns:
-            dst_cell = out_ws.cell(out_row, col.index)
-            if is_total_row:
-                bold_font = copy.copy(dst_cell.font)
-                bold_font = Font(
-                    name=bold_font.name,
-                    size=bold_font.size,
-                    bold=True,
-                    color=bold_font.color,
-                )
-                dst_cell.font = bold_font
-                dst_cell.fill = TOTAL_FILL
-            elif i % 2 == 1:
-                dst_cell.fill = STRIPE_FILL
+        if i % 2 == 1:
+            for col in template.columns:
+                out_ws.cell(out_row, col.index).fill = STRIPE_FILL
 
         out_ws.row_dimensions[out_row].height = max(min_row_height, max_lines * LINE_HEIGHT + ROW_PADDING)
+
+    # Total row - auto-generated fresh from whatever's actually in this sheet,
+    # rather than relying on a raw export's own (possibly missing, possibly
+    # differently-shaped) total. A column is "summable" if it's a passthrough
+    # column whose every non-blank value is numeric, or a formula column built
+    # only from +/- (a sum of differences equals the difference of sums, so
+    # summing the column is valid). A formula column involving division (a
+    # ratio/percentage) instead gets that same formula reapplied at the total
+    # row, referencing the just-computed totals in that row - never summed
+    # directly, since summing percentages isn't meaningful. If nothing in the
+    # sheet is summable, no Total row is added at all (e.g. an all-text sheet
+    # like New Leads).
+    if raw_rows:
+        last_data_row = first_data_row + len(raw_rows) - 1
+        total_row = last_data_row + 1
+
+        def is_numeric_column(col_idx: int) -> bool:
+            values = passthrough_values.get(col_idx, [])
+            present = [v for v in values if v is not None]
+            return bool(present) and all(isinstance(v, (int, float)) for v in present)
+
+        ratio_cols = []
+        summable_cols = []
+        for col in template.columns[1:]:
+            if col.is_formula:
+                if "/" in col.formula:
+                    ratio_cols.append(col)
+                else:
+                    summable_cols.append(col)
+            # A passthrough percentage (e.g. "Probability (%)") isn't a plain
+            # amount - summing percentages across rows isn't meaningful, so
+            # it's left blank in the Total row rather than summed like Requested/
+            # Sanctioned/Disbursed amounts are. Checked via the header text too,
+            # since a percentage stored as a whole number (50, not 0.5) may not
+            # use Excel's own "%" number format at all.
+            elif (
+                "%" not in col.number_format
+                and "%" not in col.header
+                and is_numeric_column(col.index)
+            ):
+                summable_cols.append(col)
+
+        if summable_cols or ratio_cols:
+            totaled_indices = {col.index for col in summable_cols}
+
+            def ratio_inputs_totaled(formula: str) -> bool:
+                for m in CELL_REF_RE.finditer(formula):
+                    _, letters, _, _ = m.groups()
+                    try:
+                        ref_idx = column_index_from_string(letters.upper())
+                    except ValueError:
+                        continue
+                    if ref_idx != label_col.index and ref_idx not in totaled_indices:
+                        return False
+                return True
+
+            label_cell = out_ws.cell(total_row, label_col.index, "Total")
+            copy_style(src_ws.cell(template.example_row, label_col.index), label_cell)
+
+            for col in summable_cols:
+                letter = get_column_letter(col.index)
+                cell = out_ws.cell(total_row, col.index, f"=SUM({letter}{first_data_row}:{letter}{last_data_row})")
+                copy_style(src_ws.cell(template.example_row, col.index), cell)
+
+            # A ratio's total only makes sense if every amount it divides by
+            # was itself actually totaled - otherwise (e.g. Login Amount has
+            # no total because no deal in this sheet has reached Login yet)
+            # it would silently show a misleading 0% rather than being blank.
+            for col in ratio_cols:
+                if not ratio_inputs_totaled(col.formula):
+                    continue
+                cell = out_ws.cell(
+                    total_row, col.index, shift_formula_row(col.formula, template.example_row, total_row)
+                )
+                copy_style(src_ws.cell(template.example_row, col.index), cell)
+
+            for col in template.columns:
+                cell = out_ws.cell(total_row, col.index)
+                cell.font = bold_copy(cell.font)
+                cell.fill = TOTAL_FILL
+
+            out_ws.row_dimensions[total_row].height = min_row_height
 
 
 def build_output(
