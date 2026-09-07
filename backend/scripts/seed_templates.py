@@ -62,8 +62,8 @@ DEALS_COLUMNS = [
     ("Loan Type.", None, "General"),
     ("Financial Institute Name", None, "General"),
     ("Requested Loan Amount", None, RUPEE_FORMAT),
-    ("Sanctioned Loan Amount ", None, RUPEE_FORMAT),
-    ("Disbursed Loan Amount ", None, RUPEE_FORMAT),
+    ("Sanctioned Loan Amount (Record Currency)", None, RUPEE_FORMAT),
+    ("Disbursed Loan Amount (Record Currency)", None, RUPEE_FORMAT),
     ("Balance Disbursement Amount ", "=E3-F3", RUPEE_FORMAT),
     ("Difference of Sanction Amount and Disbursed Amount", "=E3-F3", RUPEE_FORMAT),
     ("Difference of Requested Loan Amount and Sanctioned Amount ", "=D3-E3", RUPEE_FORMAT),
@@ -77,11 +77,11 @@ DEALS_COLUMNS = [
         "=(F3-E3)/E3",
         "0.00%",
     ),
-    ("Date Of Disbursement ", None, "dd-mm-yyyy"),
+    ("Closing Date", None, "dd-mm-yyyy"),
     ("Lead Source", None, "General"),
-    ("Status", None, "General"),
+    ("Stage", None, "General"),
     ("Assigned To", None, "General"),
-    ("Service Region", None, "General"),
+    ("Service Location", None, "General"),
     ("Service State", None, "General"),
 ]
 
@@ -90,40 +90,56 @@ DEALS_EXAMPLE_VALUES = {
     "Loan Type.": "Home Loan - New Purchase",
     "Financial Institute Name": "Example Bank Ltd",
     "Requested Loan Amount": 1000000,
-    "Sanctioned Loan Amount ": 950000,
-    "Disbursed Loan Amount ": 900000,
-    "Date Of Disbursement ": "2026-04-15",
+    "Sanctioned Loan Amount (Record Currency)": 950000,
+    "Disbursed Loan Amount (Record Currency)": 900000,
+    "Closing Date": "2026-04-15",
     "Lead Source": "Partner",
-    "Status": "Closed Won",
+    "Stage": "Closed Won",
     "Assigned To": "Example Person",
-    "Service Region": "Chennai",
+    "Service Location": "Chennai",
     "Service State": "Tamil Nadu",
 }
 
 PIPELINE_COLUMNS = [
     ("Deal Name", None, "General"),
     ("Stage", None, "General"),
-    ("Probablity", None, "General"),
-    ("Loan Type", None, "General"),
+    ("Probability (%)", None, "0"),
+    ("Loan Type.", None, "General"),
     ("Requested Loan Amount", None, RUPEE_FORMAT),
-    ("Login Amount", None, RUPEE_FORMAT),
+    ("Login Loan Amount", None, RUPEE_FORMAT),
     ("Difference of Requested Amount Vs Login Amount", "=E3-F3", RUPEE_FORMAT),
     ("Percentage of Requested Amount Vs Login Amount", "=F3/E3", "0.00%"),
     ("Lead Source", None, "General"),
     ("Assigned To", None, "General"),
-    ("Service Region", None, "General"),
+    ("Service Location", None, "General"),
 ]
 
 PIPELINE_EXAMPLE_VALUES = {
     "Deal Name": "Example Deal",
     "Stage": "Login",
-    "Probablity": "for Login it should be 50%",
-    "Loan Type": "Home Loan - New Purchase",
+    "Probability (%)": 50,
+    "Loan Type.": "Home Loan - New Purchase",
     "Requested Loan Amount": 3000000,
-    "Login Amount": 2800000,
+    "Login Loan Amount": 2800000,
     "Lead Source": "Partner",
     "Assigned To": "Example Person",
-    "Service Region": "Chennai",
+    "Service Location": "Chennai",
+}
+
+LEADS_COLUMNS = [
+    ("Lead Name", None, "General"),
+    ("Loan Type", None, "General"),
+    ("Lead Status", None, "General"),
+    ("Lead Source", None, "General"),
+    ("Assigned To", None, "General"),
+]
+
+LEADS_EXAMPLE_VALUES = {
+    "Lead Name": "Example Prospect",
+    "Loan Type": "Home Loan - New Purchase",
+    "Lead Status": "New",
+    "Lead Source": "External Referral",
+    "Assigned To": "Example Person",
 }
 
 
@@ -179,9 +195,16 @@ def build_pipeline_template() -> Workbook:
     )
 
 
+def build_leads_template() -> Workbook:
+    return build_template(
+        "LEADS", "New Leads FY - {QUARTER}", LEADS_COLUMNS, LEADS_EXAMPLE_VALUES
+    )
+
+
 BUILDERS = {
     "deals": build_deals_template,
     "pipeline": build_pipeline_template,
+    "leads": build_leads_template,
 }
 
 

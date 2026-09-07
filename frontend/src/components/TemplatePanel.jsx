@@ -55,6 +55,11 @@ export default function TemplatePanel({ reportType, reportLabel }) {
             One shared template is used for both Pipeline views — the full pipeline and the
             &lt;40% subset have the same columns and formulas.
           </>
+        ) : reportType === 'leads' ? (
+          <>
+            This template defines the New Leads sheet appended to the combined workbook,
+            filtered to Lead Status = "New" within the current fiscal year.
+          </>
         ) : (
           <>
             One shared template is used for all four quarters — Q1, Q2, Q3, and Q4 all have the

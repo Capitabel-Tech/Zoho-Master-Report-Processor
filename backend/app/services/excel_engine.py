@@ -46,7 +46,7 @@ def _find_header_row(ws: Worksheet, anchor_header: str = "deal name") -> int:
             if normalize_header(cell.value) == anchor_header:
                 return cell.row
     raise EngineError(
-        f'Could not find a header row containing "Deal Name" in the first 10 rows.'
+        f'Could not find a header row containing "{anchor_header.title()}" in the first 10 rows.'
     )
 
 
@@ -113,11 +113,11 @@ class ParsedTemplate:
     wb_path_for_style: str  # kept for re-opening to copy styles when building output
 
 
-def read_template(path) -> ParsedTemplate:
+def read_template(path, anchor_header: str = "deal name") -> ParsedTemplate:
     wb = load_workbook(path, data_only=False)
     ws = wb.active
 
-    header_row = _find_header_row(ws)
+    header_row = _find_header_row(ws, anchor_header)
     title_row = header_row - 1 if header_row > 1 else None
     if title_row is not None and all(
         c.value is None for c in ws[title_row]
@@ -227,11 +227,13 @@ def check_quarter_match(
     )
 
 
-def read_raw_upload(file_bytes: bytes) -> list[dict[str, object]]:
+def read_raw_upload(
+    file_bytes: bytes, anchor_header: str = "deal name"
+) -> list[dict[str, object]]:
     wb = load_workbook(io.BytesIO(file_bytes), data_only=True)
     ws = wb.active
 
-    header_row = _find_header_row(ws)
+    header_row = _find_header_row(ws, anchor_header)
     headers: dict[int, str] = {}
     for col_idx in range(1, ws.max_column + 1):
         cell = ws.cell(header_row, col_idx)
@@ -247,8 +249,7 @@ def read_raw_upload(file_bytes: bytes) -> list[dict[str, object]]:
         for col_idx, header_norm in headers.items():
             row_data[header_norm] = row[col_idx - 1].value
         # skip rows that look like a pivot / summary block (e.g. "Grand Total")
-        deal_name = row_data.get("deal name")
-        if deal_name is None:
+        if row_data.get(anchor_header) is None:
             continue
         rows.append(row_data)
 
@@ -257,17 +258,18 @@ def read_raw_upload(file_bytes: bytes) -> list[dict[str, object]]:
     return rows
 
 
-def build_output(
+def write_report_sheet(
+    out_ws: Worksheet,
     template: ParsedTemplate,
     raw_rows: list[dict[str, object]],
     quarter_label: Optional[str] = None,
-) -> bytes:
+) -> None:
+    """Writes one template-driven report into `out_ws` (an existing, already-titled
+    worksheet). `raw_rows` may be empty - that just produces a title/header-only sheet,
+    e.g. a quarter with no matching deals yet.
+    """
     src_wb = load_workbook(template.wb_path_for_style, data_only=False)
     src_ws = src_wb.active
-
-    out_wb = Workbook()
-    out_ws = out_wb.active
-    out_ws.title = src_ws.title or "Report"
 
     # Every passthrough column (Status, Lead Source, Gross Revenue, ...) is
     # copied best-effort - if the raw file doesn't have it at all, every row
@@ -415,6 +417,19 @@ def build_output(
 
         out_ws.row_dimensions[out_row].height = max(min_row_height, max_lines * LINE_HEIGHT + ROW_PADDING)
 
+
+def build_output(
+    template: ParsedTemplate,
+    raw_rows: list[dict[str, object]],
+    quarter_label: Optional[str] = None,
+) -> bytes:
+    out_wb = Workbook()
+    out_ws = out_wb.active
+    src_wb = load_workbook(template.wb_path_for_style, data_only=False)
+    out_ws.title = src_wb.active.title or "Report"
+
+    write_report_sheet(out_ws, template, raw_rows, quarter_label)
+
     # openpyxl writes formula text but no cached result; force Excel (or any
     # compliant reader) to fully recalculate the moment the file is opened,
     # instead of relying on a cached value that was never written.
@@ -442,3 +457,152 @@ def process_quarter(
             raise EngineError(mismatch)
 
     return build_output(template, raw_rows, quarter_label)
+
+
+DATE_STRING_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d")
+
+
+def parse_date_value(value: object) -> Optional[date]:
+    """Coerces a raw cell value to a `date`, handling real Excel dates AND
+    plain text dates (some Zoho exports - e.g. the Leads module's "Created
+    Time" - store dates as strings like "2024-08-09 21:30:59" rather than
+    native Excel datetimes)."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        for fmt in DATE_STRING_FORMATS:
+            try:
+                return datetime.strptime(value.strip(), fmt).date()
+            except ValueError:
+                continue
+    return None
+
+
+def filter_rows(
+    raw_rows: list[dict[str, object]],
+    field: str,
+    allowed_values: set[str],
+    date_header: Optional[str] = None,
+    date_range: Optional[tuple[date, date]] = None,
+) -> list[dict[str, object]]:
+    """Keep rows whose normalized `field` value is in `allowed_values`,
+    optionally also requiring `date_header`'s value to fall within
+    `date_range` (inclusive)."""
+    out = []
+    for row in raw_rows:
+        if normalize_header(row.get(field)) not in allowed_values:
+            continue
+        if date_header and date_range:
+            value_date = parse_date_value(row.get(date_header))
+            if value_date is None or not (date_range[0] <= value_date <= date_range[1]):
+                continue
+        out.append(row)
+    return out
+
+
+def filter_rows_by_stage(
+    raw_rows: list[dict[str, object]],
+    stages: set[str],
+    date_header: Optional[str] = None,
+    date_range: Optional[tuple[date, date]] = None,
+) -> list[dict[str, object]]:
+    """Keep rows whose normalized "stage" value is in `stages`, optionally also
+    requiring `date_header`'s value to fall within `date_range` (inclusive)."""
+    return filter_rows(raw_rows, "stage", stages, date_header, date_range)
+
+
+def build_master_workbook(
+    deals_template: ParsedTemplate,
+    pipeline_template: ParsedTemplate,
+    master_raw_rows: list[dict[str, object]],
+    current_quarter: str,
+    complete_quarters: list[str],
+    quarter_date_ranges: dict[str, tuple[date, date]],
+    fiscal_year_range_: tuple[date, date],
+    deals_stages: set[str],
+    pipeline_high_stages: set[str],
+    pipeline_low_stages: set[str],
+    leads_template: Optional[ParsedTemplate] = None,
+    leads_raw_rows: Optional[list[dict[str, object]]] = None,
+    lead_status_filter: Optional[str] = None,
+    fiscal_year_label_: Optional[str] = None,
+) -> bytes:
+    """Builds one workbook with a sheet per quarter of the current fiscal year
+    already fully elapsed (Deals), a "Till Date" Deals sheet for the quarter in
+    progress, two Pipeline sheets covering the WHOLE fiscal year (not just the
+    current quarter) split by stage rather than probability, and (if leads
+    data is supplied) a New Leads sheet also scoped to the whole fiscal year -
+    all derived from unfiltered raw exports, replacing the manual per-sheet
+    Zoho filtering.
+    """
+    out_wb = Workbook()
+    first_sheet = True
+
+    def next_ws(title: str) -> Worksheet:
+        nonlocal first_sheet
+        if first_sheet:
+            ws = out_wb.active
+            ws.title = title
+            first_sheet = False
+        else:
+            ws = out_wb.create_sheet(title)
+        return ws
+
+    for q in complete_quarters:
+        rows = filter_rows_by_stage(
+            master_raw_rows, deals_stages, "closing date", quarter_date_ranges[q]
+        )
+        write_report_sheet(next_ws(f"DEALS For {q}"), deals_template, rows, q)
+
+    till_date_rows = filter_rows_by_stage(
+        master_raw_rows, deals_stages, "closing date", quarter_date_ranges[current_quarter]
+    )
+    write_report_sheet(
+        next_ws(f"DEALS For {current_quarter} - Till Date"),
+        deals_template,
+        till_date_rows,
+        f"{current_quarter} - Till Date",
+    )
+
+    high = filter_rows_by_stage(
+        master_raw_rows, pipeline_high_stages, "closing date", fiscal_year_range_
+    )
+    low = filter_rows_by_stage(
+        master_raw_rows, pipeline_low_stages, "closing date", fiscal_year_range_
+    )
+
+    write_report_sheet(
+        next_ws(f"Pipeline Deals for {current_quarter}"),
+        pipeline_template,
+        high,
+        current_quarter,
+    )
+    write_report_sheet(
+        next_ws(f"Pipeline Deals for {current_quarter} - <40%"),
+        pipeline_template,
+        low,
+        f"{current_quarter} - <40%",
+    )
+
+    if leads_template is not None and leads_raw_rows is not None:
+        lead_rows = filter_rows(
+            leads_raw_rows,
+            "lead status",
+            {lead_status_filter},
+            "created time",
+            fiscal_year_range_,
+        )
+        write_report_sheet(
+            next_ws(f"New Leads FY - {fiscal_year_label_}"),
+            leads_template,
+            lead_rows,
+            fiscal_year_label_,
+        )
+
+    out_wb.calculation.fullCalcOnLoad = True
+    buffer = io.BytesIO()
+    out_wb.save(buffer)
+    buffer.seek(0)
+    return buffer.read()

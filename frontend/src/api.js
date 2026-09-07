@@ -57,14 +57,15 @@ export async function uploadTemplate(reportType, file) {
   return res.json()
 }
 
-export async function processRawFile(reportType, quarter, file) {
+export async function processMasterReport(file, leadsFile) {
   const form = new FormData()
   form.append('file', file)
-  const res = await apiFetch(`${API_BASE}/process/${reportType}/${quarter}`, {
+  form.append('leads_file', leadsFile)
+  const res = await apiFetch(`${API_BASE}/process/master`, {
     method: 'POST',
     body: form,
   })
   if (!res.ok) throw new Error(await extractError(res))
   const blob = await res.blob()
-  downloadBlob(blob, filenameFromDisposition(res, `${reportType}_${quarter}_processed.xlsx`))
+  downloadBlob(blob, filenameFromDisposition(res, `MIS ${new Date().toISOString().slice(0, 10)}.xlsx`))
 }
