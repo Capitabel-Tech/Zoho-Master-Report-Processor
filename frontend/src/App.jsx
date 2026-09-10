@@ -36,6 +36,11 @@ export default function App() {
           <h3 className="section-label">4. Manage Leads template</h3>
           <TemplatePanel reportType="leads" reportLabel="Leads" />
         </section>
+
+        <section>
+          <h3 className="section-label">5. Manage Meetings template</h3>
+          <TemplatePanel reportType="meetings" reportLabel="Meetings" />
+        </section>
       </main>
     </div>
   )

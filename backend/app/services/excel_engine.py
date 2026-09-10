@@ -60,7 +60,7 @@ LOOKS_LIKE_MISSING_EQUALS_RE = re.compile(
 )
 
 
-MAX_WRAPPED_LINES = 6
+MAX_WRAPPED_LINES = 60
 
 # Excel sometimes drops a column's explicit width when a file is re-saved
 # (observed after hand-editing in Excel). This is the fallback used BOTH when
@@ -562,17 +562,18 @@ def parse_date_value(value: object) -> Optional[date]:
 
 def filter_rows(
     raw_rows: list[dict[str, object]],
-    field: str,
-    allowed_values: set[str],
+    field: Optional[str] = None,
+    allowed_values: Optional[set[str]] = None,
     date_header: Optional[str] = None,
     date_range: Optional[tuple[date, date]] = None,
 ) -> list[dict[str, object]]:
-    """Keep rows whose normalized `field` value is in `allowed_values`,
-    optionally also requiring `date_header`'s value to fall within
-    `date_range` (inclusive)."""
+    """Keep rows whose normalized `field` value is in `allowed_values` (skip
+    this check entirely if `field` is None - e.g. Meetings has no status-like
+    field to filter by, only a date range), optionally also requiring
+    `date_header`'s value to fall within `date_range` (inclusive)."""
     out = []
     for row in raw_rows:
-        if normalize_header(row.get(field)) not in allowed_values:
+        if field is not None and normalize_header(row.get(field)) not in allowed_values:
             continue
         if date_header and date_range:
             value_date = parse_date_value(row.get(date_header))
@@ -608,6 +609,11 @@ def build_master_workbook(
     leads_raw_rows: Optional[list[dict[str, object]]] = None,
     lead_status_filter: Optional[str] = None,
     fiscal_year_label_: Optional[str] = None,
+    meetings_template: Optional[ParsedTemplate] = None,
+    meetings_raw_rows: Optional[list[dict[str, object]]] = None,
+    meeting_date_header: Optional[str] = None,
+    meeting_month_range: Optional[tuple[date, date]] = None,
+    meeting_month_label: Optional[str] = None,
 ) -> bytes:
     """Builds one workbook with a sheet per quarter of the current fiscal year
     already fully elapsed (Deals), a "Till Date" Deals sheet for the quarter in
@@ -679,6 +685,21 @@ def build_master_workbook(
             leads_template,
             lead_rows,
             fiscal_year_label_,
+        )
+
+    if meetings_template is not None and meetings_raw_rows is not None:
+        # No status-like field to filter by - just the current calendar
+        # month/year, unlike everything else which is fiscal-quarter/year scoped.
+        meeting_rows = filter_rows(
+            meetings_raw_rows,
+            date_header=meeting_date_header,
+            date_range=meeting_month_range,
+        )
+        write_report_sheet(
+            next_ws(f"Meetings - {meeting_month_label}"),
+            meetings_template,
+            meeting_rows,
+            meeting_month_label,
         )
 
     out_wb.calculation.fullCalcOnLoad = True

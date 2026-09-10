@@ -142,6 +142,32 @@ LEADS_EXAMPLE_VALUES = {
     "Assigned To": "Example Person",
 }
 
+# The raw Meetings export calls this field "From" (the meeting's start
+# time, with a time component) - "Date Of Meeting" doesn't exist as a raw
+# header. Unlike a naming inconsistency between exports, this is a stable,
+# permanent difference between Zoho's field name and the business term, so
+# the process router does one deliberate rename + date-only conversion right
+# after reading the raw upload (see routers/process.py) rather than relying
+# on exact-name passthrough matching for this one column.
+MEETINGS_COLUMNS = [
+    ("SL No", "=ROW()-2", "0"),
+    ("Contact Name", None, "General"),
+    ("Title", None, "General"),
+    ("Location", None, "General"),
+    ("Description", None, "General", 70),
+    ("Date Of Meeting", None, "dd-mm-yyyy"),
+    ("Staff", None, "General"),
+]
+
+MEETINGS_EXAMPLE_VALUES = {
+    "Contact Name": "Example Contact",
+    "Title": "Field Meeting",
+    "Location": "Example City",
+    "Description": "Example description",
+    "Date Of Meeting": "2026-09-15",
+    "Staff": "Example Staff",
+}
+
 
 def build_template(sheet_title: str, title_text: str, columns: list, example_values: dict) -> Workbook:
     wb = Workbook()
@@ -157,18 +183,24 @@ def build_template(sheet_title: str, title_text: str, columns: list, example_val
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=n_cols)
     ws.row_dimensions[1].height = 26
 
-    # header row
-    for idx, (header, _formula, _fmt) in enumerate(columns, start=1):
+    # header row - a column tuple may optionally carry a 4th "width" element
+    # (defaulting to 24) for a column like Meetings' Description that needs
+    # more horizontal room so its wrapped text doesn't require an enormous
+    # row height to stay readable.
+    for idx, col in enumerate(columns, start=1):
+        header = col[0]
+        width = col[3] if len(col) > 3 else 24
         cell = ws.cell(2, idx, header)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = HEADER_ALIGN
         cell.border = CELL_BORDER
-        ws.column_dimensions[get_column_letter(idx)].width = 24
+        ws.column_dimensions[get_column_letter(idx)].width = width
     ws.row_dimensions[2].height = 48
 
     # example row (row 3)
-    for idx, (header, formula, fmt) in enumerate(columns, start=1):
+    for idx, col in enumerate(columns, start=1):
+        header, formula, fmt = col[0], col[1], col[2]
         cell = ws.cell(3, idx)
         cell.value = formula if formula is not None else example_values.get(header)
         cell.number_format = fmt
@@ -201,10 +233,17 @@ def build_leads_template() -> Workbook:
     )
 
 
+def build_meetings_template() -> Workbook:
+    return build_template(
+        "MEETINGS", "Meetings - {QUARTER}", MEETINGS_COLUMNS, MEETINGS_EXAMPLE_VALUES
+    )
+
+
 BUILDERS = {
     "deals": build_deals_template,
     "pipeline": build_pipeline_template,
     "leads": build_leads_template,
+    "meetings": build_meetings_template,
 }
 
 

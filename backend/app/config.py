@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 QUARTER_LABELS = {
@@ -33,7 +33,7 @@ PERIOD_OPTIONS = {
     "pipeline": PIPELINE_PERIODS,
 }
 
-REPORT_TYPES = ["deals", "pipeline", "leads"]
+REPORT_TYPES = ["deals", "pipeline", "leads", "meetings"]
 
 LEAD_STATUS_FILTER = "new"
 
@@ -88,6 +88,28 @@ def fiscal_year_range(fy_start_year: int) -> tuple[date, date]:
 def fiscal_year_label(fy_start_year: int) -> str:
     """e.g. 2026 -> "2026 - 2027" - for titles like "New Leads FY - 2026 - 2027"."""
     return f"{fy_start_year} - {fy_start_year + 1}"
+
+
+MONTH_NAMES_LONG = {
+    1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+    7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December",
+}
+
+
+def current_month_range(today: date) -> tuple[date, date]:
+    """(start, end) calendar dates spanning just today's calendar month/year -
+    used for Meetings, which (unlike everything else) is scoped to the current
+    month, not a fiscal quarter or year."""
+    if today.month == 12:
+        next_month_start = date(today.year + 1, 1, 1)
+    else:
+        next_month_start = date(today.year, today.month + 1, 1)
+    return (date(today.year, today.month, 1), next_month_start - timedelta(days=1))
+
+
+def current_month_label(today: date) -> str:
+    """e.g. September 2026."""
+    return f"{MONTH_NAMES_LONG[today.month]} {today.year}"
 
 
 def current_and_complete_quarters(today: date) -> tuple[str, list[str]]:

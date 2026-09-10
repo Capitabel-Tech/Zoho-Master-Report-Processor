@@ -60,6 +60,11 @@ export default function TemplatePanel({ reportType, reportLabel }) {
             This template defines the New Leads sheet appended to the combined workbook,
             filtered to Lead Status = "New" within the current fiscal year.
           </>
+        ) : reportType === 'meetings' ? (
+          <>
+            This template defines the Meetings sheet appended to the combined workbook,
+            filtered to the current calendar month only (not the fiscal quarter/year).
+          </>
         ) : (
           <>
             One shared template is used for all four quarters — Q1, Q2, Q3, and Q4 all have the
